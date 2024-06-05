@@ -5,6 +5,9 @@ import numpy as np
 from scipy.ndimage import gaussian_filter
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.decomposition import PCA, KernelPCA
+from sklearn.cluster import KMeans
+
 
 class params:
     frate_thresh = 2
@@ -125,10 +128,10 @@ def examine_single_reach_kinematic_distributions(reaches, plot=False):
     plt.show()
 
 
-
 def process_kinematic_data(reaches, plot=False):
 
     kinematic_data = np.zeros((100, 3, 180))
+    kin_df = pd.DataFrame()
 
     first_event_key = [key for idx, key in enumerate(kin_module.data_interfaces.keys()) if idx == 0][0]
     dlc_scorer = kin_module.data_interfaces[first_event_key].scorer
@@ -155,17 +158,85 @@ def process_kinematic_data(reaches, plot=False):
 
             timestamps = event_data.pose_estimation_series[wrist_label].timestamps[reach.start_idx:reach.stop_idx + 1]
 
-            pos = wrist_kinematics - shoulder_kinematics
+            #pos = wrist_kinematics - shoulder_kinematics
+            pos = wrist_kinematics
 
             #kinematic_data.append(np.array(pos))
-            kinematic_data[reachNum, :, :] = pos[:, 0:180]
 
-            print('-------------------')
-            print(np.array(pos).shape[1])
-            print(np.array(kinematic_data).shape)
-            print('-------------------')
+            #print('-------------------')
+            #print(kin_df.to_string())
+            #print('-------------------')
 
-    return kinematic_data
+            vel, tmp_acc = compute_derivatives(marker_pos=pos, marker_vel=None, smooth=True)
+
+            tmp_df = pd.DataFrame(data=zip(np.sqrt(np.square(vel).sum(axis=0)),
+                                           vel[0],
+                                           vel[1],
+                                           vel[2],
+                                           pos[0, :-1],
+                                           pos[1, :-1],
+                                           pos[2, :-1],
+                                           np.repeat(reachNum, vel.shape[-1]), ),
+                                  columns=['speed', 'vx', 'vy', 'vz', 'x', 'y', 'z', 'reach', ])
+
+            kin_df = pd.concat((kin_df, tmp_df))
+
+
+    return kin_df
+
+
+
+
+
+##check transition period as well - maybe thats the third cluster?
+
+
+
+
+def get_labels_y(data):
+    unique_reaches = np.unique(data["reach"].to_numpy())
+    num_of_reaches = len(unique_reaches)
+    print(num_of_reaches)
+    labels = []
+
+    for reach_num in unique_reaches:
+        print('------------------------------------------')
+        x = data[data.reach == reach_num].x
+        y = data[data.reach == reach_num].y
+        trans_counter = 0
+        increasing = False
+        decreasing = False
+
+        for idx, y_coordinate in enumerate(y):
+
+            if idx == 1:
+                if y_coordinate > prev_y:
+                    #print('increasing')
+                    increasing = True
+                elif y_coordinate < prev_y:
+                    #print('decreasing')
+                    decreasing = True
+
+
+            if idx == 0:
+                prev_y = y_coordinate
+                labels.append(2)
+            else:
+                if y_coordinate > prev_y:
+                    #print('increasing')
+                    labels.append(0)
+                    if decreasing:
+                        decreasing = False
+                elif y_coordinate == prev_y:
+                    #print('constant')
+                    labels.append(2)
+                elif y_coordinate < prev_y:
+                    #print('decreasing')
+                    labels.append(1)
+
+                prev_y = y_coordinate
+
+    return labels
 
 nwb_infile = '/home/christopher/Desktop/TY20210211_freeAndMoths-003_resorted_20230612_DM.nwb'
 
@@ -180,7 +251,90 @@ with NWBHDF5IO(nwb_infile, 'r') as io_in:
 
     print(reaches.keys())
 
-    kinematic_data = process_kinematic_data(reaches, plot=False)
+    kin_df = process_kinematic_data(reaches, plot=False)
+
+
+
+
+    print(kin_df[kin_df.reach == 96])
+
+    indv_reach = kin_df[kin_df.reach == 85]
+
+    print(indv_reach.x)
+    print(indv_reach.y)
+    print(indv_reach.z)
+
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+    #ax.plot(indv_reach.x, indv_reach.y,indv_reach.z)
+
+
+    N = len(indv_reach.z)
+    cols = 'rgbcmy'
+
+    for i in range(N):
+        if i != 1:
+            ax.plot(indv_reach.x[i:i + 2], indv_reach.y[i:i + 2], indv_reach.z[i:i + 2], color=cols[i % 6])
+        else:
+            ax.plot(indv_reach.x[i:i + 2], indv_reach.y[i:i + 2], indv_reach.z[i:i + 2], color=cols[i % 6])
+
+    ax.set_xlabel("x (side to side)")
+    ax.set_ylabel("y (front and back)")
+    ax.set_zlabel("z (up and down)")
+
+    plt.show()
+
+    print(indv_reach)
+
+
+    kin_df = kin_df[kin_df.reach == 1]
+    indv_reach = kin_df.dropna()
+    print(kin_df)
+
+    labels = get_labels_y(kin_df)
+
+    plt.scatter(indv_reach.x, indv_reach.y, c=labels)  # without scaling
+    plt.show()
+
+    print(labels)
+
+ 
+
+    print("computing PCA")
+
+    pca = KernelPCA(n_components=None, kernel="rbf", gamma=10, fit_inverse_transform=True, alpha=0.1)
+    pca.fit(indv_reach)
+    x_new = pca.transform(indv_reach)
+
+    score = x_new[:, 0:2]
+    print(indv_reach.shape)
+    print(score.shape)
+
+    xs = score[:, 0]
+    ys = score[:, 1]
+
+
+
+    plt.scatter(xs, ys, c=labels)  # without scaling
+    plt.show()
+
+
+    kmeans = KMeans(n_clusters=5)
+
+    label = kmeans.fit_predict(x_new)
+
+    print(label)
+    print(label.shape)
+
+
+    for lab in np.unique(label):
+        print(lab)
+        filtered_label = x_new[label == lab]
+
+        plt.scatter(filtered_label[:, 0], filtered_label[:, 1], color=cols[lab % 6])
+
+    plt.show()
+
 
 
 
