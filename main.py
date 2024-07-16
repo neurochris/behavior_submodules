@@ -1,12 +1,14 @@
+import math
+
 from pynwb import NWBHDF5IO
 from hatlab_nwb_functions import get_sorted_units_and_apparatus_kinematics_with_metadata
 import pandas as pd
 import numpy as np
-from scipy.ndimage import gaussian_filter
+from scipy.ndimage import gaussian_filter, gaussian_filter1d
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.decomposition import PCA, KernelPCA
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans, SpectralClustering
 
 
 class params:
@@ -253,47 +255,143 @@ with NWBHDF5IO(nwb_infile, 'r') as io_in:
 
     kin_df = process_kinematic_data(reaches, plot=False)
 
+    reach_idx = 5
 
+    indv_reach = kin_df[kin_df.reach == reach_idx]
+    cols = 'rgbcmy'
 
-
-    print(kin_df[kin_df.reach == 96])
-
-    indv_reach = kin_df[kin_df.reach == 85]
 
     print(indv_reach.x)
     print(indv_reach.y)
     print(indv_reach.z)
 
+    print(np.sqrt(((indv_reach.vx*indv_reach.vx) + (indv_reach.vy*indv_reach.vy))))
+
+    plt.plot(range(0, len(indv_reach.vx)), np.sqrt((indv_reach.vx*indv_reach.vx) + (indv_reach.vy*indv_reach.vy)))
+    plt.title("Speed profile for reach " + str(reach_idx))
+    plt.xlabel("Time")
+    plt.ylabel("Speed")
+    plt.show()
+
+    plt.plot(indv_reach.x, indv_reach.y)
+    plt.title("X and y pos for reach " + str(reach_idx))
+    plt.xlabel("X pos")
+    plt.ylabel("Y pos")
+    plt.show()
+
+    i = 0
+
+    fig, ax = plt.subplots()
+
+    for i in range(len(indv_reach.x)):
+        if len(indv_reach.x[i:i + 2]) == 2:
+            if i != 1:
+                ax.plot(indv_reach.vx[i:i + 2], indv_reach.vy[i:i + 2])
+            else:
+                ax.plot(indv_reach.vx[i:i + 2], indv_reach.vy[i:i + 2])
+
+    plt.title("X and y pos for reach " + str(reach_idx))
+    plt.xlabel("X pos")
+    plt.ylabel("Y pos")
+    plt.show()
+
+    i = 0
+
+    fig, ax = plt.subplots()
+
+    for i in range(len(indv_reach.x)):
+        if len(indv_reach.vx[i:i+2]) == 2:
+            if i != 1:
+                ax.plot(range(i, i+2), np.sqrt(indv_reach.vx[i:i + 2]*indv_reach.vx[i:i + 2] + indv_reach.vy[i:i + 2]*indv_reach.vy[i:i + 2]))
+            else:
+                ax.plot(range(i, i+2), np.sqrt(indv_reach.vx[i:i + 2]*indv_reach.vx[i:i + 2] + indv_reach.vy[i:i + 2]*indv_reach.vy[i:i + 2]))
+
+    plt.title("Speed for reach " + str(reach_idx))
+    plt.xlabel("Time")
+    plt.ylabel("Speed")
+    plt.show()
+
+    speed = np.sqrt(indv_reach.vx*indv_reach.vx + indv_reach.vy*indv_reach.vy)
+
+    smooth = gaussian_filter1d(speed, 1)
+
+    # compute second derivative
+    smooth_d2 = np.gradient(smooth)
+
+    stationary_points = np.where(np.diff(np.sign(smooth_d2)))[0]
+    print(stationary_points)
+    # plot results
+    #plt.plot(speed, label='Noisy Data')
+    #plt.plot(smooth, label='Smoothed Data')
+    #plt.plot(np.max(smooth) * (smooth_d2) / (np.max(smooth_d2) - np.min(smooth_d2)), label='First Derivative (scaled)')
+
+    prev_idx = 0
+    for i, idx in enumerate(stationary_points, 1):
+        plt.plot(speed[prev_idx:idx], color=cols[i % 6])
+        prev_idx = idx
+
+
+    for i, spt in enumerate(stationary_points, 1):
+        plt.axvline(x=spt, color='k', label=f'Inflection Point {i}')
+
+
+    #plt.legend()
+    plt.title("Stationary points in speed profile for reach " + str(reach_idx))
+    plt.xlabel("Time")
+    plt.ylabel("Speed")
+    plt.show()
+
+
+
+
+
+    i = 0
+
+    fig, ax = plt.subplots()
+    prev_idx = 0
+
+    for i, idx in enumerate(stationary_points, 1):
+        ax.plot(indv_reach.vx[prev_idx:idx], indv_reach.vy[prev_idx:idx], color=cols[i % 6])
+        prev_idx = idx
+
+    plt.title("Segmented x and y pos for reach " + str(reach_idx))
+    plt.xlabel("X pos")
+    plt.ylabel("Y pos")
+    plt.show()
+
+
+
+
+    '''
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
     #ax.plot(indv_reach.x, indv_reach.y,indv_reach.z)
-
 
     N = len(indv_reach.z)
     cols = 'rgbcmy'
 
     for i in range(N):
         if i != 1:
-            ax.plot(indv_reach.x[i:i + 2], indv_reach.y[i:i + 2], indv_reach.z[i:i + 2], color=cols[i % 6])
+            ax.plot(indv_reach.vx[i:i + 2], indv_reach.vy[i:i + 2], color=cols[i % 6])
         else:
-            ax.plot(indv_reach.x[i:i + 2], indv_reach.y[i:i + 2], indv_reach.z[i:i + 2], color=cols[i % 6])
+            ax.plot(indv_reach.vx[i:i + 2], indv_reach.vy[i:i + 2], color=cols[i % 6])
 
-    ax.set_xlabel("x (side to side)")
-    ax.set_ylabel("y (front and back)")
-    ax.set_zlabel("z (up and down)")
+    ax.set_xlabel("vx (side to side)")
+    ax.set_ylabel("vy (front and back)")
+    ##ax.set_zlabel("vz (up and down)")
 
     plt.show()
 
     print(indv_reach)
 
 
-    kin_df = kin_df[kin_df.reach == 1]
+    kin_df = kin_df[kin_df.reach == reach_idx]
     indv_reach = kin_df.dropna()
     print(kin_df)
 
     labels = get_labels_y(kin_df)
 
-    plt.scatter(indv_reach.x, indv_reach.y, c=labels)  # without scaling
+    plt.scatter(indv_reach.vx, indv_reach.vy, c=labels)  # without scaling
     plt.show()
 
     print(labels)
@@ -302,7 +400,9 @@ with NWBHDF5IO(nwb_infile, 'r') as io_in:
 
     print("computing PCA")
 
-    pca = KernelPCA(n_components=None, kernel="rbf", gamma=10, fit_inverse_transform=True, alpha=0.1)
+    indv_reach = indv_reach[['vx', 'vy']]
+
+    pca = KernelPCA(n_components=2, kernel="rbf", gamma=10, fit_inverse_transform=True, alpha=0.1)
     pca.fit(indv_reach)
     x_new = pca.transform(indv_reach)
 
@@ -319,9 +419,9 @@ with NWBHDF5IO(nwb_infile, 'r') as io_in:
     plt.show()
 
 
-    kmeans = KMeans(n_clusters=5)
+    kmeans = KMeans(n_clusters=2)
 
-    label = kmeans.fit_predict(x_new)
+    label = kmeans.fit_predict(score)
 
     print(label)
     print(label.shape)
@@ -329,12 +429,14 @@ with NWBHDF5IO(nwb_infile, 'r') as io_in:
 
     for lab in np.unique(label):
         print(lab)
-        filtered_label = x_new[label == lab]
+        filtered_label = score[label == lab]
 
         plt.scatter(filtered_label[:, 0], filtered_label[:, 1], color=cols[lab % 6])
 
     plt.show()
 
+    print(indv_reach)
+    '''
 
 
 
